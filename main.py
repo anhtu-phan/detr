@@ -4,6 +4,7 @@ import datetime
 import json
 import random
 import time
+import wandb
 from pathlib import Path
 
 import numpy as np
@@ -93,6 +94,11 @@ def get_args_parser():
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                         help='start epoch')
     parser.add_argument('--eval', action='store_true')
+    parser.add_argument('--demo', action='store_true')
+    parser.add_argument('--image_input',
+                        help='path to load image for demo')
+    parser.add_argument('--wandb_name',
+                        help='path to load image for demo')
     parser.add_argument('--num_workers', default=2, type=int)
 
     # distributed training parameters
@@ -103,6 +109,7 @@ def get_args_parser():
 
 
 def main(args):
+    wandb.init(name=args.wandb_name, project="detr-fruit-detection")
     utils.init_distributed_mode(args)
     print("git:\n  {}\n".format(utils.get_sha()))
 
@@ -141,6 +148,8 @@ def main(args):
 
     dataset_train = build_dataset(image_set='train', args=args)
     dataset_val = build_dataset(image_set='val', args=args)
+    print(f"{'-'*10}train_set size = {len(dataset_train)}{''*10}")
+    print(f"{'-'*10}val_set size = {len(dataset_val)}{''*10}")
 
     if args.distributed:
         sampler_train = DistributedSampler(dataset_train)
@@ -175,7 +184,14 @@ def main(args):
                 args.resume, map_location='cpu', check_hash=True)
         else:
             checkpoint = torch.load(args.resume, map_location='cpu')
-        model_without_ddp.load_state_dict(checkpoint['model'])
+        pre_train_model = {}
+        for k, v in model_without_ddp.state_dict().items():
+            if k.startswith("class_embed"):
+                pre_train_model[k] = v
+            else:
+                pre_train_model[k] = checkpoint['model'][k]
+        model_without_ddp.load_state_dict(pre_train_model)
+        print("----DONE load pretrain model -----")
         if not args.eval and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
             optimizer.load_state_dict(checkpoint['optimizer'])
             lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
@@ -188,6 +204,7 @@ def main(args):
             utils.save_on_master(coco_evaluator.coco_eval["bbox"].eval, output_dir / "eval.pth")
         return
 
+    wandb.watch(model, log='all')
     print("Start training")
     start_time = time.time()
     for epoch in range(args.start_epoch, args.epochs):
@@ -216,9 +233,11 @@ def main(args):
         )
 
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
-                     **{f'test_{k}': v for k, v in test_stats.items()},
-                     'epoch': epoch,
-                     'n_parameters': n_parameters}
+                     **{f'val_{k}': v for k, v in test_stats.items()},}
+        print(f"{'-'*20}log_stats{'-'*20}\n{log_stats}\n{'-'*40}")
+        wandb.log(log_stats, step=epoch)
+        log_stats['epoch'] = epoch
+        log_stats['n_parameters'] = n_parameters
 
         if args.output_dir and utils.is_main_process():
             with (output_dir / "log.txt").open("a") as f:
@@ -240,9 +259,98 @@ def main(args):
     print('Training time {}'.format(total_time_str))
 
 
+def demo(args):
+    print(f"{'-'*10}run demo{'-'*10}\n")
+    import torchvision.transforms as T
+    from PIL import Image
+    import matplotlib.pyplot as plt
+    import os
+    os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
+
+    CLASSES = ['almond', 'apple', "mango", "N/A", "N/A", "N/A"]
+    COLORS = [[0.000, 0.447, 0.741], [0.850, 0.325, 0.098], [0.929, 0.694, 0.125],
+              [0.494, 0.184, 0.556], [0.466, 0.674, 0.188], [0.301, 0.745, 0.933]]
+    model, _, _ = build_model(args)
+    print(f"{'-' * 10}DONE BUILD MODEL{'-' * 10}\n")
+    checkpoint = torch.load(args.resume, map_location='cpu')
+    model.load_state_dict(checkpoint['model'])
+    model.eval()
+    # standard PyTorch mean-std input image normalization
+    transform = T.Compose([
+        T.Resize(800),
+        T.ToTensor(),
+        T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    ])
+
+    # for output bounding box post-processing
+    def box_cxcywh_to_xyxy(x):
+        x_c, y_c, w, h = x.unbind(1)
+        b = [(x_c - 0.5 * w), (y_c - 0.5 * h),
+             (x_c + 0.5 * w), (y_c + 0.5 * h)]
+        return torch.stack(b, dim=1)
+
+    def rescale_bboxes(out_bbox, size):
+        img_w, img_h = size
+        b = box_cxcywh_to_xyxy(out_bbox)
+        b = b * torch.tensor([img_w, img_h, img_w, img_h], dtype=torch.float32)
+        return b
+
+    def detect(im, model, transform):
+        # mean-std normalize the input image (batch-size: 1)
+        img = transform(im).unsqueeze(0)
+
+        # demo model only support by default images with aspect ratio between 0.5 and 2
+        # if you want to use images with an aspect ratio outside this range
+        # rescale your image so that the maximum size is at most 1333 for best results
+        assert img.shape[-2] <= 1600 and img.shape[
+            -1] <= 1600, 'demo model only supports images up to 1600 pixels on each side'
+
+        # propagate through the model
+        outputs = model(img)
+        # print(f"{'-'*10}outputs{'-'*10}\n{outputs}\n")
+        # keep only predictions with 0.7+ confidence
+        probas = outputs['pred_logits'].softmax(-1)[0, :, :-1]
+        # print(f"{'-' * 10}probas{'-' * 10}\n{probas}\n")
+        keep = probas.max(-1).values >= 0.75
+
+        # convert boxes from [0; 1] to image scales
+        bboxes_scaled = rescale_bboxes(outputs['pred_boxes'][0, keep], im.size)
+        return probas[keep], bboxes_scaled
+
+    def plot_results(pil_img, prob, boxes, img_name):
+        plt.figure(figsize=(40, 30))
+        plt.imshow(pil_img)
+        ax = plt.gca()
+        for p, (xmin, ymin, xmax, ymax), c in zip(prob, boxes.tolist(), COLORS * 100):
+            ax.add_patch(plt.Rectangle((xmin, ymin), xmax - xmin, ymax - ymin,
+                                       fill=False, color=c, linewidth=3))
+            cl = p.argmax()
+            print(f"cl = {cl}")
+            text = f'{CLASSES[cl]}: {p[cl]:0.2f}'
+            ax.text(xmin, ymin, text, fontsize=15,
+                    bbox=dict(facecolor='yellow', alpha=0.5))
+        plt.axis('off')
+        plt.savefig(f"{args.output_dir}/{img_name}")
+
+    if os.path.isdir(args.image_input):
+        for img_filename in os.listdir(args.image_input):
+            im = Image.open(os.path.join(args.image_input, img_filename))
+
+            scores, boxes = detect(im, model, transform)
+            plot_results(im, scores, boxes, f"{img_filename}")
+    else:
+        im = Image.open(args.image_input)
+        scores, boxes = detect(im, model, transform)
+        plot_results(im, scores, boxes, "result.png")
+    print(f"{'-' * 10}DONE{'-' * 10}")
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('DETR training and evaluation script', parents=[get_args_parser()])
     args = parser.parse_args()
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
-    main(args)
+    if args.demo:
+        demo(args)
+    else:
+        main(args)
