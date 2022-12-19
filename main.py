@@ -97,8 +97,6 @@ def get_args_parser():
     parser.add_argument('--demo', action='store_true')
     parser.add_argument('--image_input',
                         help='path to load image for demo')
-    parser.add_argument('--wandb_name',
-                        help='path to load image for demo')
     parser.add_argument('--num_workers', default=2, type=int)
 
     # distributed training parameters
@@ -109,7 +107,7 @@ def get_args_parser():
 
 
 def main(args):
-    wandb.init(name=args.wandb_name, project="detr-fruit-detection")
+    wandb.init(name=args.wandb_name, project=args.wandb_project_name)
     utils.init_distributed_mode(args)
     print("git:\n  {}\n".format(utils.get_sha()))
 
@@ -329,6 +327,20 @@ def demo(args):
             text = f'{CLASSES[cl]}: {p[cl]:0.2f}'
             ax.text(xmin, ymin, text, fontsize=6,
                     bbox=dict(facecolor='yellow', alpha=0.5))
+        ax.text(10, 40, f"#detected: {len(boxes.tolist())}", fontsize=20, bbox=dict(facecolor='yellow', alpha=0.5))
+        if args.annotation_path is not None:
+            f = open(args.annotation_path)
+            annotation = json.load(f)
+            for im in annotation['images']:
+                if im['file_name'] == img_name:
+                    nb_gt = 0
+                    for ano in annotation['annotations']:
+                        if ano['image_id'] == im['id']:
+                            nb_gt += 1
+                    ax.text(10, 90, f"#gt: {nb_gt} (acc: {1-abs(len(boxes.tolist()) - nb_gt)*1.0/nb_gt:.2f})", fontsize=20, bbox=dict(facecolor='yellow', alpha=0.5))
+                    break
+
+            f.close()
         plt.axis('off')
         plt.savefig(f"{args.output_dir}/{img_name}", bbox_inches='tight')
 
@@ -347,6 +359,11 @@ def demo(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('DETR training and evaluation script', parents=[get_args_parser()])
+    parser.add_argument('--annotation_path', help='path to load image for demo')
+    parser.add_argument('--wandb_project_name', help='path to load image for demo')
+    parser.add_argument('--wandb_name', help='path to load image for demo')
+    parser.add_argument('--num_classes', help='path to load image for demo')
+
     args = parser.parse_args()
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)

@@ -6,8 +6,8 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from ..util import box_ops
-from ..util.misc import (NestedTensor, nested_tensor_from_tensor_list,
+from util import box_ops
+from util.misc import (NestedTensor, nested_tensor_from_tensor_list,
                        accuracy, get_world_size, interpolate,
                        is_dist_avail_and_initialized)
 
@@ -310,12 +310,15 @@ def build(args):
     # you should pass `num_classes` to be 2 (max_obj_id + 1).
     # For more details on this, check the following discussion
     # https://github.com/facebookresearch/detr/issues/108#issuecomment-650269223
-    # num_classes = 20 if args.dataset_file != 'coco' else 91
-    # if args.dataset_file == "coco_panoptic":
-    #     # for panoptic, we just add a num_classes that is large enough to hold
-    #     # max_obj_id + 1, but the exact value doesn't really matter
-    #     num_classes = 250
-    num_classes = 3
+    if args.num_classes:
+        num_classes = args.num_classes
+    else:
+        num_classes = 20 if args.dataset_file != 'coco' else 91
+        if args.dataset_file == "coco_panoptic":
+            # for panoptic, we just add a num_classes that is large enough to hold
+            # max_obj_id + 1, but the exact value doesn't really matter
+            num_classes = 250
+
     device = torch.device(args.device)
 
     backbone = build_backbone(args)
