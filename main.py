@@ -362,7 +362,7 @@ if __name__ == '__main__':
     parser.add_argument('--annotation_path', help='path to load image for demo')
     parser.add_argument('--wandb_project_name', help='path to load image for demo')
     parser.add_argument('--wandb_name', help='path to load image for demo')
-    parser.add_argument('--num_classes', help='path to load image for demo')
+    parser.add_argument('--num_classes', help='path to load image for demo', type=int)
 
     args = parser.parse_args()
     if args.output_dir:
