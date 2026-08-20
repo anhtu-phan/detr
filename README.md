@@ -1,6 +1,3 @@
-**DE⫶TR**: End-to-End Object Detection with Transformers
-========
-
 ## Fork note — what I changed
 
 This is my working fork of **[facebookresearch/detr](https://github.com/facebookresearch/detr)**, used for object-detection experiments in late 2022 on a shared university GPU cluster running Slurm. The model and the original code are the upstream authors'; **everything below the horizontal rule is their README, unchanged.**
@@ -16,6 +13,9 @@ What I added on top:
 Trace any of it with `git log --author=anhtu95`.
 
 ---
+
+**DE⫶TR**: End-to-End Object Detection with Transformers
+========
 
 [![Support Ukraine](https://img.shields.io/badge/Support-Ukraine-FFD500?style=flat&labelColor=005BBB)](https://opensource.fb.com/support-ukraine)
 
