@@ -1,6 +1,22 @@
 **DE⫶TR**: End-to-End Object Detection with Transformers
 ========
 
+## Fork note — what I changed
+
+This is my working fork of **[facebookresearch/detr](https://github.com/facebookresearch/detr)**, used for object-detection experiments in late 2022 on a shared university GPU cluster running Slurm. The model and the original code are the upstream authors'; **everything below the horizontal rule is their README, unchanged.**
+
+What I added on top:
+
+- **`--num_classes` as a command-line argument.** Upstream fixes the class count for COCO; I made it a parameter so the same checkpoint could be fine-tuned onto a different label set.
+- **`scripts/run.sh`** — a single entry point for training: `torch.distributed.launch --nproc_per_node=1 --use_env`, VisDrone as the COCO-format dataset, resume from the released `detr-r50` checkpoint, 300 epochs, Weights & Biases logging wired to a project and run name.
+- **`scripts/submit.sh`** — the Slurm job script that calls it: `--partition=students`, `--gres=gpu:mem11g:1` (requesting the GPU by memory class rather than by name), `--nodelist` when a specific node was needed, `--mem=16000`, mail on every state change. It activates the project's virtualenv and then `srun`s the run script.
+- **A container that actually builds.** The Dockerfile is based on `pytorch/pytorch:1.12.0-cuda11.3-cudnn8-runtime` with `Cython` and `libgtk2.0-dev` added, because the C extensions and the OpenCV demo path do not build without them.
+- **`demo.py`** for single-image inference, and Weights & Biases added to `requirements.txt`.
+
+Trace any of it with `git log --author=anhtu95`.
+
+---
+
 [![Support Ukraine](https://img.shields.io/badge/Support-Ukraine-FFD500?style=flat&labelColor=005BBB)](https://opensource.fb.com/support-ukraine)
 
 PyTorch training code and pretrained models for **DETR** (**DE**tection **TR**ansformer).
